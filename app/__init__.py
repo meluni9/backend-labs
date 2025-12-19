@@ -13,3 +13,4 @@ jwt = JWTManager(app)
 
 from app import models
 from app import views
+from app import auth
