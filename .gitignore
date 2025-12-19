@@ -62,3 +62,4 @@ pytest_cache/
 *.pid
 *.tar
 *.bak
+.env
