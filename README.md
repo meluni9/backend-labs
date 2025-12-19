@@ -1,103 +1,87 @@
-# Expense Tracker API (Lab 3)
+# Expense Tracker API (Lab 4: Authentication)
 
-A RESTful API for tracking expenses built with Flask, SQLAlchemy (ORM), PostgreSQL, and Marshmallow for validation.
+A RESTful API for tracking expenses built with Flask, SQLAlchemy, and Marshmallow, now featuring **JWT-based Authentication** and **Password Hashing**.
 
-## Lab 3 Variant Info
+## Lab 4 Variant Info
 **Group:** IM-32  
-**Variant:** 2 (User-defined expense categories)  
 **Task Description:**  
-Implemented a category system where:
-- **Global Categories:** Created by admins (or without `user_id`), visible to ALL users.
-- **Private Categories:** Created by specific users, visible ONLY to the creator.
-- When retrieving categories, a user sees the union of Global + Their Private categories.
+Implemented a full authentication flow using **JSON Web Tokens (JWT)**:
+- **JWT Authentication:** Implemented using `flask-jwt-extended`.
+- **Password Security:** Passwords are never stored in plain text; they are hashed using `passlib` (pbkdf2_sha256).
+- **Access Control:** All resource-related endpoints (Users, Categories, Records) are protected with the `@jwt_required()` decorator.
+- **Custom Error Handlers:** Specific responses for expired, invalid, or missing tokens.
 
 ## Features
 
-- **Database:** Full persistence using PostgreSQL.
-- **ORM:** Database interaction via SQLAlchemy.
+- **Authentication:** Dedicated `/register` and `/login` endpoints.
+- **Security:** Secure password hashing and JWT identity verification.
+- **Database:** PostgreSQL persistence via SQLAlchemy ORM.
 - **Validation:** Strong input validation using Marshmallow schemas.
-- **Migrations:** Database schema management with Flask-Migrate.
-- **User Management:** Create, read, delete users.
-- **Category Management:** Support for global and private categories.
-- **Records:** Track expenses linked to users and categories.
-- **Dockerized:** Full setup with App and DB containers.
+- **Migrations:** Managed database schema updates with Flask-Migrate.
+- **Access Control:** Differentiated access to Global vs Private categories based on the authenticated user's identity.
 
 ## Prerequisites
 
 - Docker & Docker Compose
-- Postman (for testing)
+- Postman (to test the authentication flow)
 
 ## Setup & Run
 
-### 1. Clone the repository
-
+### 1. Configure Secret Key
+Before running the application, generate a secret key for JWT:
 ```bash
-git clone https://github.com/meluni9/backend-labs.git
-cd backend-labs
+python -c 'import secrets; print(secrets.SystemRandom().getrandbits(128))'
 ```
+Set this value as an environment variable: `JWT_SECRET_KEY`.
 
-### 2. Run with Docker Compose (Recommended)
-
-This command will start both the Flask App and the PostgreSQL database.
-
+### 2. Run with Docker Compose
 ```bash
 docker-compose up -d --build
 ```
-
 The API will be available at `http://localhost:8080`.
 
-### 3. Database Migrations (First Run Only)
+### 3. Database Migrations
+Apply migrations to create the new `users` table with password support:
+```bash
+docker-compose exec app flask db upgrade
+```
 
-If you are running the project for the first time, you need to apply database migrations to create tables.
+## API Endpoints
 
-1. Enter the app container:
-   ```bash
-   docker-compose exec app sh
-   ```
-2. Apply migrations:
-   ```bash
-   flask db upgrade
-   ```
-3. Exit the container:
-   ```bash
-   exit
-   ```
+### Authentication (Public)
+- `POST /register` - Create a new account
+  - Body: `{"username": "Alice", "password": "securepassword"}`
+- `POST /login` - Authenticate and receive a token
+  - Body: `{"username": "Alice", "password": "securepassword"}`
+  - Response: `{"access_token": "your_jwt_token_here"}`
+- `GET /healthcheck` - Check DB connection
 
-## 🔌 API Endpoints
+### Protected Endpoints (Requires `Authorization: Bearer <token>`)
 
-### Healthcheck
-- `GET /healthcheck` - Check DB connection status
-
-### Users
+#### Users
 - `GET /users` - List all users
-- `POST /user` - Create a user
-  - Body: `{"username": "Alice"}`
 - `GET /user/<id>` - Get user details
-- `DELETE /user/<id>` - Delete a user (cascades to records)
+- `DELETE /user/<id>` - Delete a user
 
-### Categories
-- `GET /category?user_id=<id>` 
-  - Returns **Global Categories** + **Private Categories** for this user.
-- `POST /category` - Create a category
-  - Body (Global): `{"name": "Food"}`
-  - Body (Private): `{"name": "My Hobby", "user_id": 1}`
+#### Categories
+- `GET /category` - Returns **Global Categories** + **Private Categories** for the authenticated user.
+- `POST /category` - Create a category (Global if `user_id` is null, else Private)
 - `DELETE /category/<id>` - Delete a category
 
-### Records
-- `POST /record` - Add a new expense
-  - Body: `{"user_id": 1, "category_id": 2, "amount": 150.50}`
+#### Records
+- `POST /record` - Add a new expense record
 - `GET /record?user_id=<id>&category_id=<id>` - Filter records
 - `GET /record/<id>` - Get record details
 - `DELETE /record/<id>` - Delete a record
 
-## Testing
+## Testing with Postman Flow
 
-The project includes validation. Examples of error handling:
-- Trying to create a User with a short name -> **400 Bad Request**
-- Trying to create a Record with non-existent User ID -> **400 Bad Request**
-- Trying to get a non-existent Record -> **404 Not Found**
+1. **Register:** Create a user via `/register`.
+2. **Login:** Send a request to `/login` to receive your **Access Token**.
+3. **Authorize:** Copy the token. In Postman, go to the **Authorization** tab, select **Bearer Token**, and paste the token.
+4. **Access:** Now you can access protected resources like `/users` or `/category`. Without the token, the API will return a **401 Unauthorized** error.
 
 ## Deployment
 
 The application is deployed on Render.com:
-https://backend-labs-s0hz.onrender.com
+[https://backend-labs-s0hz.onrender.com](https://backend-labs-s0hz.onrender.com)
