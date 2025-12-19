@@ -1,124 +1,153 @@
 from flask import jsonify, request
-from app import app
-from app import data
-from datetime import datetime
-import uuid
-
-@app.route('/', methods=['GET'])
-def welcome():
-    return jsonify({"message": "Welcome!"}), 200
+from sqlalchemy.exc import IntegrityError
+from app import app, db
+from app.models import User, Category, Record
+from app.schemas import UserSchema, CategorySchema, RecordSchema, RecordQuerySchema
+from marshmallow import ValidationError
 
 
 @app.route('/healthcheck', methods=['GET'])
 def healthcheck():
-    return jsonify({
-        "status": "ok",
-        "date": datetime.now().isoformat()
-    }), 200
-
-
-# User endpoints
-@app.route('/users', methods=['GET'])
-def get_users():
-    return jsonify(list(data.users.values())), 200
-
-
-@app.route('/user/<user_id>', methods=['GET'])
-def get_user(user_id):
-    user = data.users.get(user_id)
-    if user:
-        return jsonify(user), 200
-    return jsonify({"error": "User not found"}), 404
+    return jsonify({"status": "ok", "message": "Database connected"}), 200
 
 
 @app.route('/user', methods=['POST'])
 def create_user():
-    user_data = request.get_json()
-    user_id = uuid.uuid4().hex
-    user = {"id": user_id, **user_data}
-    data.users[user_id] = user
-    return jsonify(user), 201
+    schema = UserSchema()
+    try:
+        data = schema.load(request.get_json())
+    except ValidationError as err:
+        return jsonify(err.messages), 400
+
+    new_user = User(username=data['username'])
+    try:
+        db.session.add(new_user)
+        db.session.commit()
+    except IntegrityError:
+        db.session.rollback()
+        return jsonify({"error": "User already exists"}), 400
+
+    return jsonify(schema.dump(new_user)), 201
 
 
-@app.route('/user/<user_id>', methods=['DELETE'])
+@app.route('/users', methods=['GET'])
+def get_users():
+    users = User.query.all()
+    return jsonify(UserSchema(many=True).dump(users)), 200
+
+
+@app.route('/user/<int:user_id>', methods=['GET'])
+def get_user(user_id):
+    user = User.query.get_or_404(user_id)
+    return jsonify(UserSchema().dump(user)), 200
+
+
+@app.route('/user/<int:user_id>', methods=['DELETE'])
 def delete_user(user_id):
-    if user_id in data.users:
-        del data.users[user_id]
-        return '', 204
-    return jsonify({"error": "User not found"}), 404
+    user = User.query.get_or_404(user_id)
+    db.session.delete(user)
+    db.session.commit()
+    return '', 204
 
 
-# Category endpoints
 @app.route('/category', methods=['GET'])
 def get_categories():
-    return jsonify(list(data.categories.values())), 200
+    user_id = request.args.get('user_id')
+
+    query = Category.query.filter(Category.user_id is None)  # Загальні
+
+    if user_id:
+        query = Category.query.filter((Category.user_id is None) | (Category.user_id == user_id))
+
+    categories = query.all()
+    return jsonify(CategorySchema(many=True).dump(categories)), 200
 
 
 @app.route('/category', methods=['POST'])
 def create_category():
-    category_data = request.get_json()
-    category_id = uuid.uuid4().hex
-    category = {"id": category_id, **category_data}
-    data.categories[category_id] = category
-    return jsonify(category), 201
+    schema = CategorySchema()
+    try:
+        data = schema.load(request.get_json())
+    except ValidationError as err:
+        return jsonify(err.messages), 400
+
+    new_category = Category(name=data['name'], user_id=data.get('user_id'))
+
+    db.session.add(new_category)
+    db.session.commit()
+    return jsonify(schema.dump(new_category)), 201
 
 
-@app.route('/category/<category_id>', methods=['DELETE'])
+@app.route('/category/<int:category_id>', methods=['DELETE'])
 def delete_category(category_id):
-    if category_id in data.categories:
-        del data.categories[category_id]
-        return '', 204
-    return jsonify({"error": "Category not found"}), 404
-
-
-# Record endpoints
-@app.route('/record/<record_id>', methods=['GET'])
-def get_record(record_id):
-    record = data.records.get(record_id)
-    if record:
-        return jsonify(record), 200
-    return jsonify({"error": "Record not found"}), 404
+    category = Category.query.get_or_404(category_id)
+    db.session.delete(category)
+    db.session.commit()
+    return '', 204
 
 
 @app.route('/record', methods=['POST'])
 def create_record():
-    record_data = request.get_json()
-    record_id = uuid.uuid4().hex
-    record = {
-        "id": record_id,
-        "created_at": datetime.now().isoformat(),
-        **record_data
-    }
-    data.records[record_id] = record
-    return jsonify(record), 201
+    schema = RecordSchema()
+    try:
+        data = schema.load(request.get_json())
+    except ValidationError as err:
+        return jsonify(err.messages), 400
+
+    new_record = Record(
+        user_id=data['user_id'],
+        category_id=data['category_id'],
+        amount=data['amount']
+    )
+
+    try:
+        db.session.add(new_record)
+        db.session.commit()
+    except IntegrityError:
+        db.session.rollback()
+        return jsonify({"error": "User or Category not found"}), 400
+
+    return jsonify(schema.dump(new_record)), 201
 
 
-@app.route('/record/<record_id>', methods=['DELETE'])
-def delete_record(record_id):
-    if record_id in data.records:
-        del data.records[record_id]
-        return '', 204
-    return jsonify({"error": "Record not found"}), 404
+@app.route('/record/<int:record_id>', methods=['GET'])
+def get_record(record_id):
+    record = Record.query.get_or_404(record_id)
+    return jsonify(RecordSchema().dump(record)), 200
 
 
 @app.route('/record', methods=['GET'])
-def get_records():
-    user_id = request.args.get('user_id')
-    category_id = request.args.get('category_id')
+def get_records_filtered():
+    schema = RecordQuerySchema()
+    try:
+        args = schema.load(request.args)
+    except ValidationError as err:
+        return jsonify(err.messages), 400
+
+    user_id = args.get('user_id')
+    category_id = args.get('category_id')
 
     if not user_id and not category_id:
-        return jsonify({"error": "user_id or category_id parameter required"}), 400
+        return jsonify({"error": "user_id or category_id required"}), 400
 
-    filtered_records = []
-    for record in data.records.values():
-        if user_id and category_id:
-            if record.get('user_id') == user_id and record.get('category_id') == category_id:
-                filtered_records.append(record)
-        elif user_id:
-            if record.get('user_id') == user_id:
-                filtered_records.append(record)
-        elif category_id:
-            if record.get('category_id') == category_id:
-                filtered_records.append(record)
+    query = Record.query
+    if user_id:
+        query = query.filter_by(user_id=user_id)
+    if category_id:
+        query = query.filter_by(category_id=category_id)
 
-    return jsonify(filtered_records), 200
+    records = query.all()
+    return jsonify(RecordSchema(many=True).dump(records)), 200
+
+
+@app.route('/record/<int:record_id>', methods=['DELETE'])
+def delete_record(record_id):
+    record = Record.query.get_or_404(record_id)
+    db.session.delete(record)
+    db.session.commit()
+    return '', 204
+
+
+@app.route('/')
+def welcome():
+    return jsonify({"message": "Welcome to Lab 3 with DB!"})
